@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interaktive Straßenknoten-Karte</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+        #map {
+            height: 100%;
+        }
+    </style>
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+</head>
+<body>
+
+<h2 style="display: none;">Interaktive Straßenknoten-Karte</h2>
+<div id="map"></div>
+
+<script>
+    // Karte initialisieren
+    var map = L.map('map').setView([53.832902809997215, 10.695815444759504], 15);
+
+    // OpenStreetMap Tile Layer hinzufügen
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+
+    // Haversine-Distanzberechnung
+    function haversine(coord1, coord2) {
+        var lat1 = coord1[0], lon1 = coord1[1];
+        var lat2 = coord2[0], lon2 = coord2[1];
+
+        lat1 = lat1 * Math.PI / 180;
+        lon1 = lon1 * Math.PI / 180;
+        lat2 = lat2 * Math.PI / 180;
+        lon2 = lon2 * Math.PI / 180;
+
+        var dlat = lat2 - lat1;
+        var dlon = lon2 - lon1;
+
+        var a = Math.sin(dlat / 2) * Math.sin(dlat / 2) +
+                Math.cos(lat1) * Math.cos(lat2) *
+                Math.sin(dlon / 2) * Math.sin(dlon / 2);
+        var c = 2 * Math.asin(Math.sqrt(a));
+        var r = 6371; // Erdradius in Kilometern
+        return r * c;
+    }
+
+    // Gezeichnete Knoten und Kanten initialisieren
+    var drawnNodes = [];
+    var drawnEdges = new Set();
+
+    // Speichert Knoten samt Nachbarn in LocalStorage
+    function saveNodesToLocalStorage() {
+        localStorage.setItem('drawnNodesWithNeighbors', JSON.stringify(drawnNodes));
+    }
+
+    // Funktion zur Verarbeitung des GPS-Standorts
+    function processLocation(lat, lon) {
+        var radius = 30; // Radius in Metern
+        console.log('GPS-Koordinaten:', lat, lon);
+
+        // Overpass API Abfrage erstellen
+        var query = `
+            [out:json];
+            way(around:${radius},${lat},${lon})[highway];
+            (._;>;);
+            out;
+        `;
+
+        // AJAX-Anfrage an die Overpass-API
+        fetch('https://overpass-api.de/api/interpreter', {
+            method: 'POST',
+            body: query,
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            console.log(data);
+            data.elements.forEach(function(element) {
+                if (element.type === 'node') {
+                    var distance = haversine([lat, lon], [element.lat, element.lon]);
+                    if (distance < 0.01) {
+                        var existingNode = drawnNodes.find(n => n.id === element.id);
+                        if (!existingNode) {
+                            var newNode = { id: element.id, lat: element.lat, lon: element.lon, neighbors: [] };
+                            drawnNodes.push(newNode);
+                        }
+                        saveNodesToLocalStorage();
+                    }
+                }
+            });
+
+            data.elements.forEach(function(element) {
+                if (element.type === 'way') {
+                    drawEdges(element.nodes);
+                }
+            });
+
+            saveNodesToLocalStorage();
+        })
+        .catch(error => console.error('Error:', error));
+    }
+
+    // Funktion zum Zeichnen der Kanten zwischen Knoten
+    function drawEdges(nodes) {
+        nodes.forEach((nodeId, index) => {
+            var node = drawnNodes.find(n => n.id === nodeId);
+            if (node) {
+                if (index > 0) {
+                    var prevNodeId = nodes[index - 1];
+                    var prevNode = drawnNodes.find(n => n.id === prevNodeId);
+                    if (prevNode && !drawnEdges.has(node.id + '-' + prevNode.id)) {
+                        L.polyline([[node.lat, node.lon], [prevNode.lat, prevNode.lon]], { color: 'blue' }).addTo(map);
+                        node.neighbors.push({ id: prevNode.id });
+                        prevNode.neighbors.push({ id: node.id });
+                        drawnEdges.add(node.id + '-' + prevNode.id);
+                        drawnEdges.add(prevNode.id + '-' + node.id);
+                    }
+                }
+            }
+        });
+    }
+
+    // Variable für den Standortmarker
+    var currentLocationMarker;
+
+    // GPS-Koordinaten überwachen und aktualisieren
+    function startLocationTracking() {
+        if (navigator.geolocation) {
+            navigator.geolocation.watchPosition(
+                function(position) {
+                    var lat = position.coords.latitude;
+                    var lon = position.coords.longitude;
+                    console.log('Aktuelle Position:', lat, lon);
+
+                    map.setView([lat, lon], 15);
+
+                    if (currentLocationMarker) {
+                        map.removeLayer(currentLocationMarker);
+                    }
+
+                    currentLocationMarker = L.marker([lat, lon]).addTo(map);
+
+                    processLocation(lat, lon);
+                },
+                function(error) {
+                    console.error("Fehler beim Abrufen der GPS-Position:", error);
+                    // Fallback zu getCurrentPosition
+                    navigator.geolocation.getCurrentPosition(
+                        function(position) {
+                            var lat = position.coords.latitude;
+                            var lon = position.coords.longitude;
+                            console.log('Fallback Position:', lat, lon);
+                            map.setView([lat, lon], 15);
+                            if (currentLocationMarker) map.removeLayer(currentLocationMarker);
+                            currentLocationMarker = L.marker([lat, lon]).addTo(map);
+                            processLocation(lat, lon);
+                        }
+                    );
+                },
+                {
+                    enableHighAccuracy: true,
+                    maximumAge: 10000, // Cache für 10 Sekunden
+                    timeout: 20000 // Timeout auf 20 Sekunden setzen
+                }
+            );
+        } else {
+            console.error("Geolocation wird von diesem Browser nicht unterstützt.");
+        }
+    }
+
+    // Standortverfolgung starten
+    startLocationTracking();
+</script>
+
+</body>
+</html>
