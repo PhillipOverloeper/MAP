@@ -135,45 +135,44 @@
     var currentLocationMarker;
 
     // GPS-Koordinaten überwachen und aktualisieren
+    var isTracking = false;  // Flag to track if tracking has started
+
     function startLocationTracking() {
         if (navigator.geolocation) {
-            navigator.geolocation.watchPosition(
-                function(position) {
-                    var lat = position.coords.latitude;
-                    var lon = position.coords.longitude;
-                    console.log('Aktuelle Position:', lat, lon);
+            if (!isTracking) {
+                navigator.geolocation.getCurrentPosition(
+                    function(position) {
+                        var lat = position.coords.latitude;
+                        var lon = position.coords.longitude;
+                        console.log('Aktuelle Position:', lat, lon);
 
-                    map.setView([lat, lon], 15);
+                        map.setView([lat, lon], 15);
+                        currentLocationMarker = L.marker([lat, lon]).addTo(map);
+                        isTracking = true;
+                        // Start the interval for location updates
+                        setInterval(function() {
+                            navigator.geolocation.getCurrentPosition(function(position) {
+                                var lat = position.coords.latitude;
+                                var lon = position.coords.longitude;
+                                console.log('Aktualisierte Position:', lat, lon);
 
-                    if (currentLocationMarker) {
-                        map.removeLayer(currentLocationMarker);
+                                map.setView([lat, lon], 15);
+                                currentLocationMarker.setLatLng([lat, lon]);
+
+                                processLocation(lat, lon);
+                            });
+                        }, 5000);  // Update every 5 seconds
+                    },
+                    function(error) {
+                        console.error("Fehler beim Abrufen der GPS-Position:", error);
+                    },
+                    {
+                        enableHighAccuracy: true,
+                        maximumAge: 10000, // Cache für 10 Sekunden
+                        timeout: 20000 // Timeout auf 20 Sekunden setzen
                     }
-
-                    currentLocationMarker = L.marker([lat, lon]).addTo(map);
-
-                    processLocation(lat, lon);
-                },
-                function(error) {
-                    console.error("Fehler beim Abrufen der GPS-Position:", error);
-                    // Fallback zu getCurrentPosition
-                    navigator.geolocation.getCurrentPosition(
-                        function(position) {
-                            var lat = position.coords.latitude;
-                            var lon = position.coords.longitude;
-                            console.log('Fallback Position:', lat, lon);
-                            map.setView([lat, lon], 15);
-                            if (currentLocationMarker) map.removeLayer(currentLocationMarker);
-                            currentLocationMarker = L.marker([lat, lon]).addTo(map);
-                            processLocation(lat, lon);
-                        }
-                    );
-                },
-                {
-                    enableHighAccuracy: true,
-                    maximumAge: 10000, // Cache für 10 Sekunden
-                    timeout: 20000 // Timeout auf 20 Sekunden setzen
-                }
-            );
+                );
+            }
         } else {
             console.error("Geolocation wird von diesem Browser nicht unterstützt.");
         }
